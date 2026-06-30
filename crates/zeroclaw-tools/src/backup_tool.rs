@@ -27,6 +27,21 @@ impl BackupTool {
         self.workspace_dir.join("backups")
     }
 
+    /// Reject backup names that could escape the backups directory via path
+    /// traversal. A valid name is a single path component with no `..`, `/`,
+    /// or `\` — matching the `backup-YYYYMMDDTHHMMSSZ` format produced by
+    /// `cmd_create`.
+    fn validate_backup_name(name: &str) -> anyhow::Result<()> {
+        if name.is_empty()
+            || name.contains("..")
+            || name.contains('/')
+            || name.contains('\\')
+        {
+            anyhow::bail!("Invalid backup name: {name:?}");
+        }
+        Ok(())
+    }
+
     async fn cmd_create(&self) -> anyhow::Result<ToolResult> {
         let ts = chrono::Utc::now().format("%Y%m%dT%H%M%SZ");
         let name = format!("backup-{ts}");
@@ -125,6 +140,7 @@ impl BackupTool {
     }
 
     async fn cmd_verify(&self, backup_name: &str) -> anyhow::Result<ToolResult> {
+        Self::validate_backup_name(backup_name)?;
         let backup_dir = self.backups_dir().join(backup_name);
         if !backup_dir.is_dir() {
             return Ok(ToolResult {
@@ -172,6 +188,7 @@ impl BackupTool {
     }
 
     async fn cmd_restore(&self, backup_name: &str, confirm: bool) -> anyhow::Result<ToolResult> {
+        Self::validate_backup_name(backup_name)?;
         let backup_dir = self.backups_dir().join(backup_name);
         if !backup_dir.is_dir() {
             return Ok(ToolResult {
@@ -492,5 +509,27 @@ mod tests {
         assert_eq!(items.len(), 2);
         // Newest first by name (ISO8601 names sort lexicographically).
         assert!(items[0]["name"].as_str().unwrap() >= items[1]["name"].as_str().unwrap());
+    }
+
+    #[tokio::test]
+    async fn reject_path_traversal_in_backup_name() {
+        let tmp = TempDir::new().unwrap();
+        let cfg_dir = tmp.path().join("config");
+        std::fs::create_dir_all(&cfg_dir).unwrap();
+        std::fs::write(cfg_dir.join("a.toml"), "v1").unwrap();
+
+        let tool = make_tool(&tmp);
+
+        for malicious in &["../etc", "..\\windows", "foo/../../../etc", ".."] {
+            let res = tool
+                .execute(json!({"command": "verify", "backup_name": malicious}))
+                .await;
+            assert!(res.is_err(), "verify should reject {malicious:?}");
+
+            let res = tool
+                .execute(json!({"command": "restore", "backup_name": malicious, "confirm": true}))
+                .await;
+            assert!(res.is_err(), "restore should reject {malicious:?}");
+        }
     }
 }
