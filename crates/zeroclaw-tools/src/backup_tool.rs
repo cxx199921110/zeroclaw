@@ -32,11 +32,7 @@ impl BackupTool {
     /// or `\` — matching the `backup-YYYYMMDDTHHMMSSZ` format produced by
     /// `cmd_create`.
     fn validate_backup_name(name: &str) -> anyhow::Result<()> {
-        if name.is_empty()
-            || name.contains("..")
-            || name.contains('/')
-            || name.contains('\\')
-        {
+        if name.is_empty() || name.contains("..") || name.contains('/') || name.contains('\\') {
             anyhow::bail!("Invalid backup name: {name:?}");
         }
         Ok(())
